@@ -42,18 +42,66 @@ import { setTransitionHooks } from './BaseTransition'
 import { ComponentRenderContext } from '../componentPublicInstance'
 import { devtoolsComponentAdded } from '../devtools'
 import { isAsyncWrapper } from '../apiAsyncComponent'
+import { ref, Ref, toRef } from '@vue/reactivity'
 
 type MatchPattern = string | RegExp | (string | RegExp)[]
+
+type CacheKey = string | number | symbol | ConcreteComponent
+type Cache = Map<CacheKey, VNode>
+type Keys = Set<CacheKey>
+
+interface CacheRemoveFunc {
+  (key: CacheKey): void
+  __prune_proxy: ((key: CacheKey) => void) | null
+}
+export interface KeepAliveCache {
+  include: Ref<MatchPattern | undefined>
+  exclude: Ref<MatchPattern | undefined>
+  max: Ref<number | string | undefined>
+  cache: Cache
+  remove: CacheRemoveFunc
+  clear: () => void
+}
 
 export interface KeepAliveProps {
   include?: MatchPattern
   exclude?: MatchPattern
   max?: number | string
+  cache?: KeepAliveCache
 }
 
-type CacheKey = string | number | symbol | ConcreteComponent
-type Cache = Map<CacheKey, VNode>
-type Keys = Set<CacheKey>
+export const createKeepAliveCache = (
+  props?: Omit<KeepAliveProps, 'cache'>
+): KeepAliveCache => {
+  const include = props?.include ? toRef(props, 'include') : ref<MatchPattern>()
+  const exclude = props?.exclude ? toRef(props, 'exclude') : ref<MatchPattern>()
+  const max = props?.max ? toRef(props, 'max') : ref<number | string>()
+
+  const cache = new Map()
+  const remove: CacheRemoveFunc = Object.assign(
+    (key: CacheKey) => {
+      if (remove.__prune_proxy && cache.has(key)) remove.__prune_proxy(key)
+    },
+    {
+      __prune_proxy: null
+    }
+  )
+  const clear = () => {
+    if (remove.__prune_proxy) {
+      for (const key of cache.keys()) {
+        remove.__prune_proxy(key)
+      }
+    }
+  }
+  return {
+    include,
+    exclude,
+    max,
+    cache,
+    remove,
+    clear
+  }
+}
 
 export interface KeepAliveContext extends ComponentRenderContext {
   renderer: RendererInternals
@@ -81,7 +129,8 @@ const KeepAliveImpl: ComponentOptions = {
   props: {
     include: [String, RegExp, Array],
     exclude: [String, RegExp, Array],
-    max: [String, Number]
+    max: [String, Number, Object],
+    cache: Object
   },
 
   setup(props: KeepAliveProps, { slots }: SetupContext) {
@@ -99,7 +148,10 @@ const KeepAliveImpl: ComponentOptions = {
       return slots.default
     }
 
-    const cache: Cache = new Map()
+    const cacheObj = props.cache ?? createKeepAliveCache(props)
+    cacheObj.remove.__prune_proxy = pruneCacheEntry
+
+    const cache: Cache = cacheObj.cache
     const keys: Keys = new Set()
     let current: VNode | null = null
 
@@ -201,10 +253,12 @@ const KeepAliveImpl: ComponentOptions = {
 
     // prune cache on include/exclude prop change
     watch(
-      () => [props.include, props.exclude],
+      () => [cacheObj.include, cacheObj.exclude],
       ([include, exclude]) => {
-        include && pruneCache(name => matches(include, name))
-        exclude && pruneCache(name => !matches(exclude, name))
+        include.value &&
+          pruneCache(name => matches(cacheObj.include.value!, name))
+        exclude.value &&
+          pruneCache(name => !matches(cacheObj.exclude.value!, name))
       },
       // prune post-render after `current` has been updated
       { flush: 'post', deep: true }

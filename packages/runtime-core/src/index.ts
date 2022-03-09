@@ -90,7 +90,12 @@ export { Fragment, Text, Comment, Static } from './vnode'
 // Built-in components
 export { Teleport, TeleportProps } from './components/Teleport'
 export { Suspense, SuspenseProps } from './components/Suspense'
-export { KeepAlive, KeepAliveProps } from './components/KeepAlive'
+export {
+  KeepAlive,
+  KeepAliveProps,
+  createKeepAliveCache,
+  KeepAliveCache
+} from './components/KeepAlive'
 export {
   BaseTransition,
   BaseTransitionProps
